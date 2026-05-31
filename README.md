@@ -43,6 +43,8 @@ and ensure your YAML has:
 `training.device: mps`
 `data.loader: native`
 
+Important MPS note: `CTCLoss` may not be implemented on MPS in your torch version. If you enable recognition (`recognition_loss_weight > 0`) and hit an error like `aten::_ctc_loss is not currently implemented for the MPS device`, this repo falls back to computing the CTC loss on CPU for that step (slower but works). Alternatively you can set `PYTORCH_ENABLE_MPS_FALLBACK=1` in your environment.
+
 ! Note that the default data directory is `./data`. If you download them to somewhere else, you need to update the `data_path` parameters in your config file.   
 ## ToDo:
 
