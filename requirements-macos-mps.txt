@@ -1,0 +1,24 @@
+# Minimal, modern deps for running on macOS (Apple Silicon) with MPS.
+#
+# Notes:
+# - This intentionally avoids torchtext (legacy Field/BucketIterator APIs are gone).
+#   Use `data.loader: native` in your YAML.
+# - Install PyTorch from the official selector if you need a specific build.
+#
+# Core
+PyYAML>=6.0
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+tqdm>=4.66
+matplotlib>=3.7
+opencv-python>=4.8
+sentencepiece>=0.2
+sacrebleu>=2.4
+plotly>=5.20
+warmup-scheduler>=0.3
+tensorboard>=2.13
+
+# PyTorch (MPS supported in 1.12+, recommended 2.x)
+torch>=2.1
+torchvision>=0.16

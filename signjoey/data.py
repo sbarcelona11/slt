@@ -7,10 +7,12 @@ import sys
 import random
 
 import torch
-from torchtext import data
-from torchtext.data import Dataset, Iterator
 import socket
-from signjoey.dataset import SignTranslationDataset
+from typing import Any, Tuple
+
+from signjoey.native_data import load_data as load_native_data
+from signjoey.native_data import make_data_iter as make_native_data_iter
+
 from signjoey.vocabulary import (
     build_vocab,
     Vocabulary,
@@ -21,7 +23,7 @@ from signjoey.vocabulary import (
 )
 
 
-def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, Vocabulary, Vocabulary):
+def load_data(data_cfg: dict) -> Tuple[Any, Any, Any, Vocabulary, Vocabulary]:
     """
     Load train, dev and optionally test data as specified in configuration.
     Vocabularies are created from the training set with a limit of `voc_limit`
@@ -46,6 +48,33 @@ def load_data(data_cfg: dict) -> (Dataset, Dataset, Dataset, Vocabulary, Vocabul
         - gls_vocab: gloss vocabulary extracted from training data
         - txt_vocab: spoken text vocabulary extracted from training data
     """
+    loader = str(data_cfg.get("loader", "torchtext")).lower()
+    if loader in {"native", "torch"}:
+        train_data, dev_data, test_data, gls_vocab, txt_vocab = load_native_data(
+            data_cfg=data_cfg
+        )
+        # attach vocabs/metadata for iterator creation
+        train_data.gls_vocab = gls_vocab
+        train_data.txt_vocab = txt_vocab
+        train_data.level = data_cfg["level"]
+        dev_data.gls_vocab = gls_vocab
+        dev_data.txt_vocab = txt_vocab
+        dev_data.level = data_cfg["level"]
+        test_data.gls_vocab = gls_vocab
+        test_data.txt_vocab = txt_vocab
+        test_data.level = data_cfg["level"]
+        return train_data, dev_data, test_data, gls_vocab, txt_vocab
+
+    # torchtext loader (legacy)
+    try:
+        from torchtext import data  # type: ignore
+        from torchtext.data import Dataset  # type: ignore
+        from signjoey.dataset import SignTranslationDataset  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(
+            "torchtext loader selected but torchtext is not available. "
+            "Set data.loader: native to run without torchtext."
+        ) from e
 
     data_path = data_cfg.get("data_path", "./data")
 
@@ -199,24 +228,48 @@ def token_batch_size_fn(new, count, sofar):
 
 
 def make_data_iter(
-    dataset: Dataset,
+    dataset: Any,
     batch_size: int,
     batch_type: str = "sentence",
     train: bool = False,
     shuffle: bool = False,
-) -> Iterator:
+) -> Any:
     """
-    Returns a torchtext iterator for a torchtext dataset.
+    Returns an iterator for either a torchtext dataset or the native dataset.
 
-    :param dataset: torchtext dataset containing sgn and optionally txt
+    :param dataset: dataset containing sgn and optionally txt
     :param batch_size: size of the batches the iterator prepares
     :param batch_type: measure batch size by sentence count or by token count
     :param train: whether it's training time, when turned off,
         bucketing, sorting within batches and shuffling is disabled
     :param shuffle: whether to shuffle the data before each epoch
         (no effect if set to True for testing)
-    :return: torchtext iterator
+    :return: iterator / dataloader
     """
+
+    # native path (torchtext-free)
+    if dataset.__class__.__module__.startswith("signjoey.native_data"):
+        feature_size = int(dataset.examples[0].sgn.size(-1)) if len(dataset) else 0
+        return make_native_data_iter(
+            dataset=dataset,
+            batch_size=batch_size,
+            batch_type=batch_type,
+            train=train,
+            shuffle=shuffle,
+            gls_vocab=getattr(dataset, "gls_vocab", None),
+            txt_vocab=getattr(dataset, "txt_vocab", None),
+            level=getattr(dataset, "level", "word"),
+            feature_size=feature_size,
+        )
+
+    # torchtext path
+    try:
+        from torchtext import data  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(
+            "torchtext dataset passed but torchtext is not installed. "
+            "Set data.loader: native to run without torchtext."
+        ) from e
 
     batch_size_fn = token_batch_size_fn if batch_type == "token" else None
 

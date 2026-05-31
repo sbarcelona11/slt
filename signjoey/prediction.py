@@ -10,13 +10,14 @@ import time
 import torch.nn as nn
 
 from typing import List
-from torchtext.data import Dataset
+from typing import Any
 from signjoey.loss import XentLoss
 from signjoey.helpers import (
     bpe_postprocess,
     load_config,
     get_latest_checkpoint,
     load_checkpoint,
+    resolve_device,
 )
 from signjoey.metrics import bleu, chrf, rouge, wer_list
 from signjoey.model import build_model, SignModel
@@ -32,9 +33,9 @@ from signjoey.phoenix_utils.phoenix_cleanup import (
 # pylint: disable=too-many-arguments,too-many-locals,no-member
 def validate_on_data(
     model: SignModel,
-    data: Dataset,
+    data: Any,
     batch_size: int,
-    use_cuda: bool,
+    device: torch.device,
     sgn_dim: int,
     do_recognition: bool,
     recognition_loss_function: torch.nn.Module,
@@ -70,7 +71,7 @@ def validate_on_data(
     :param model: model module
     :param data: dataset for validation
     :param batch_size: validation batch size
-    :param use_cuda: if True, use CUDA
+    :param device: torch device to run on
     :param translation_max_output_length: maximum length for generated hypotheses
     :param level: segmentation level, one of "char", "bpe", "word"
     :param translation_loss_function: translation loss function (XEntropy)
@@ -102,6 +103,7 @@ def validate_on_data(
         - decoded_valid: raw validation hypotheses (before post-processing),
         - valid_attention_scores: attention scores for validation hypotheses
     """
+    model.to(device)
     valid_iter = make_data_iter(
         dataset=data,
         batch_size=batch_size,
@@ -128,7 +130,7 @@ def validate_on_data(
                 torch_batch=valid_batch,
                 txt_pad_index=txt_pad_index,
                 sgn_dim=sgn_dim,
-                use_cuda=use_cuda,
+                device=device,
                 frame_subsampling_ratio=frame_subsampling_ratio,
             )
             sort_reverse_index = batch.sort_by_sgn_lengths()
@@ -278,7 +280,11 @@ def validate_on_data(
 
 # pylint: disable-msg=logging-too-many-args
 def test(
-    cfg_file, ckpt: str, output_path: str = None, logger: logging.Logger = None
+    cfg_file,
+    ckpt: str,
+    output_path: str = None,
+    logger: logging.Logger = None,
+    device: str = None,
 ) -> None:
     """
     Main test function. Handles loading a model from checkpoint, generating
@@ -298,6 +304,8 @@ def test(
             logger.setLevel(level=logging.DEBUG)
 
     cfg = load_config(cfg_file)
+    if device is not None:
+        cfg.setdefault("training", {})["device"] = device
 
     if "test" not in cfg["data"].keys():
         raise ValueError("Test data must be specified in config.")
@@ -313,7 +321,8 @@ def test(
 
     batch_size = cfg["training"]["batch_size"]
     batch_type = cfg["training"].get("batch_type", "sentence")
-    use_cuda = cfg["training"].get("use_cuda", False)
+    resolved_device = resolve_device(cfg["training"])
+    use_cuda = resolved_device.type == "cuda"
     level = cfg["data"]["level"]
     dataset_version = cfg["data"].get("version", "phoenix_2014_trans")
     translation_max_output_length = cfg["training"].get(
@@ -324,7 +333,7 @@ def test(
     _, dev_data, test_data, gls_vocab, txt_vocab = load_data(data_cfg=cfg["data"])
 
     # load model state from disk
-    model_checkpoint = load_checkpoint(ckpt, use_cuda=use_cuda)
+    model_checkpoint = load_checkpoint(ckpt, device=resolved_device)
 
     # build model and load parameters into it
     do_recognition = cfg["training"].get("recognition_loss_weight", 1.0) > 0.0
@@ -341,8 +350,7 @@ def test(
     )
     model.load_state_dict(model_checkpoint["model_state"])
 
-    if use_cuda:
-        model.cuda()
+    model.to(resolved_device)
 
     # Data Augmentation Parameters
     frame_subsampling_ratio = cfg["data"].get("frame_subsampling_ratio", None)
@@ -370,14 +378,12 @@ def test(
         recognition_loss_function = torch.nn.CTCLoss(
             blank=model.gls_vocab.stoi[SIL_TOKEN], zero_infinity=True
         )
-        if use_cuda:
-            recognition_loss_function.cuda()
+        recognition_loss_function.to(resolved_device)
     if do_translation:
         translation_loss_function = XentLoss(
             pad_index=txt_vocab.stoi[PAD_TOKEN], smoothing=0.0
         )
-        if use_cuda:
-            translation_loss_function.cuda()
+        translation_loss_function.to(resolved_device)
 
     # NOTE (Cihan): Currently Hardcoded to be 0 for TensorFlow decoding
     assert model.gls_vocab.stoi[SIL_TOKEN] == 0
@@ -395,7 +401,7 @@ def test(
                 model=model,
                 data=dev_data,
                 batch_size=batch_size,
-                use_cuda=use_cuda,
+                device=resolved_device,
                 batch_type=batch_type,
                 dataset_version=dataset_version,
                 sgn_dim=sum(cfg["data"]["feature_size"])
@@ -458,7 +464,7 @@ def test(
                     model=model,
                     data=dev_data,
                     batch_size=batch_size,
-                    use_cuda=use_cuda,
+                    device=resolved_device,
                     level=level,
                     sgn_dim=sum(cfg["data"]["feature_size"])
                     if isinstance(cfg["data"]["feature_size"], list)
@@ -561,7 +567,7 @@ def test(
         model=model,
         data=test_data,
         batch_size=batch_size,
-        use_cuda=use_cuda,
+        device=resolved_device,
         batch_type=batch_type,
         dataset_version=dataset_version,
         sgn_dim=sum(cfg["data"]["feature_size"])

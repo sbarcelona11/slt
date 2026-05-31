@@ -166,15 +166,24 @@ def build_scheduler(
 
     if scheduler_name == "plateau":
         # learning rate scheduler
+        plateau_kwargs = dict(
+            optimizer=optimizer,
+            mode=scheduler_mode,
+            threshold_mode="abs",
+            factor=config.get("decrease_factor", 0.1),
+            patience=config.get("patience", 10),
+        )
+        # torch versions differ (e.g. verbose removed in newer torch)
+        try:  # pragma: no cover
+            import inspect
+
+            sig = inspect.signature(lr_scheduler.ReduceLROnPlateau.__init__)
+            if "verbose" in sig.parameters:
+                plateau_kwargs["verbose"] = False
+        except Exception:
+            pass
         return (
-            lr_scheduler.ReduceLROnPlateau(
-                optimizer=optimizer,
-                mode=scheduler_mode,
-                verbose=False,
-                threshold_mode="abs",
-                factor=config.get("decrease_factor", 0.1),
-                patience=config.get("patience", 10),
-            ),
+            lr_scheduler.ReduceLROnPlateau(**plateau_kwargs),
             "validation",
         )
     elif scheduler_name == "cosineannealing":

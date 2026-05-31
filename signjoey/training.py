@@ -19,6 +19,7 @@ from signjoey.helpers import (
     load_checkpoint,
     make_model_dir,
     make_logger,
+    resolve_device,
     set_seed,
     symlink_update,
 )
@@ -32,7 +33,7 @@ from signjoey.metrics import wer_single
 from signjoey.vocabulary import SIL_TOKEN
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
-from torchtext.data import Dataset
+from typing import Any
 from typing import List, Dict
 
 
@@ -161,13 +162,13 @@ class TrainManager:
         self.eval_batch_size = train_config.get("eval_batch_size", self.batch_size)
         self.eval_batch_type = train_config.get("eval_batch_type", self.batch_type)
 
-        self.use_cuda = train_config["use_cuda"]
-        if self.use_cuda:
-            self.model.cuda()
-            if self.do_translation:
-                self.translation_loss_function.cuda()
-            if self.do_recognition:
-                self.recognition_loss_function.cuda()
+        self.device = resolve_device(train_config)
+        self.use_cuda = self.device.type == "cuda"
+        self.model.to(self.device)
+        if self.do_translation:
+            self.translation_loss_function.to(self.device)
+        if self.do_recognition:
+            self.recognition_loss_function.to(self.device)
 
         # initialize training statistics
         self.steps = 0
@@ -304,7 +305,7 @@ class TrainManager:
         :param reset_optimizer: reset the optimizer, and do not use the one
                                 stored in the checkpoint.
         """
-        model_checkpoint = load_checkpoint(path=path, use_cuda=self.use_cuda)
+        model_checkpoint = load_checkpoint(path=path, device=self.device)
 
         # restore model and optimizer parameters
         self.model.load_state_dict(model_checkpoint["model_state"])
@@ -335,11 +336,9 @@ class TrainManager:
         else:
             self.logger.info("Reset tracking of the best checkpoint.")
 
-        # move parameters to cuda
-        if self.use_cuda:
-            self.model.cuda()
+        self.model.to(self.device)
 
-    def train_and_validate(self, train_data: Dataset, valid_data: Dataset) -> None:
+    def train_and_validate(self, train_data: Any, valid_data: Any) -> None:
         """
         Train the model and validate it from time to time on the validation set.
 
@@ -380,7 +379,7 @@ class TrainManager:
                     torch_batch=batch,
                     txt_pad_index=self.txt_pad_index,
                     sgn_dim=self.feature_size,
-                    use_cuda=self.use_cuda,
+                    device=self.device,
                     frame_subsampling_ratio=self.frame_subsampling_ratio,
                     random_frame_subsampling=self.random_frame_subsampling,
                     random_frame_masking_ratio=self.random_frame_masking_ratio,
@@ -464,7 +463,7 @@ class TrainManager:
                         model=self.model,
                         data=valid_data,
                         batch_size=self.eval_batch_size,
-                        use_cuda=self.use_cuda,
+                        device=self.device,
                         batch_type=self.eval_batch_type,
                         dataset_version=self.dataset_version,
                         sgn_dim=self.feature_size,
@@ -963,13 +962,16 @@ class TrainManager:
                 opened_file.write("{}|{}\n".format(seq, hyp))
 
 
-def train(cfg_file: str) -> None:
+def train(cfg_file: str, device: str = None) -> None:
     """
     Main training function. After training, also test on test data if given.
 
     :param cfg_file: path to configuration yaml file
+    :param device: optional device override (auto/cpu/cuda/mps)
     """
     cfg = load_config(cfg_file)
+    if device is not None:
+        cfg.setdefault("training", {})["device"] = device
 
     # set the random seed
     set_seed(seed=cfg["training"].get("random_seed", 42))
@@ -1030,7 +1032,13 @@ def train(cfg_file: str) -> None:
     output_path = os.path.join(trainer.model_dir, output_name)
     logger = trainer.logger
     del trainer
-    test(cfg_file, ckpt=ckpt, output_path=output_path, logger=logger)
+    test(
+        cfg_file,
+        ckpt=ckpt,
+        output_path=output_path,
+        logger=logger,
+        device=cfg.get("training", {}).get("device"),
+    )
 
 
 if __name__ == "__main__":
@@ -1042,8 +1050,16 @@ if __name__ == "__main__":
         help="Training configuration file (yaml).",
     )
     parser.add_argument(
-        "--gpu_id", type=str, default="0", help="gpu to run your job on"
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps"],
+        help="Device to run on. 'auto' picks cuda/mps/cpu if available.",
+    )
+    parser.add_argument(
+        "--gpu_id", type=str, default="0", help="CUDA GPU id for CUDA runs only."
     )
     args = parser.parse_args()
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
-    train(cfg_file=args.config)
+    if args.device == "cuda":
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
+    train(cfg_file=args.config, device=args.device)

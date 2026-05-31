@@ -15,7 +15,35 @@ This code is based on [Joey NMT](https://github.com/joeynmt/joeynmt) but modifie
 
 ## Usage
 
-  `python -m signjoey train configs/sign.yaml` 
+  `python -m signjoey train configs/sign.yaml`
+
+### Device selection (CPU/CUDA/MPS)
+
+- Config: set `training.device` to `cpu`, `cuda`, `mps`, or `auto` (default behavior is backwards compatible with `training.use_cuda`).
+- CLI override: `python -m signjoey train configs/sign.yaml --device mps`
+- CUDA GPU selection: `python -m signjoey train configs/sign.yaml --device cuda --gpu_id 0`
+
+Note: the pinned `requirements.txt` uses `torch==1.4.0`, which does **not** support MPS. To run on Apple Silicon MPS you need a newer PyTorch build (and likely a compatible `torchtext`), otherwise `--device mps` / `training.device: mps` will fail at runtime.
+
+### macOS (Apple Silicon) + MPS setup
+
+The original codebase relies on torchtext's *legacy* `Field`/`BucketIterator` APIs. Those APIs were removed from modern torchtext releases, and torchtext has strict version coupling to torch (see the PyTorch domain compatibility matrix).
+
+To make MPS feasible without torchtext, this repo includes a torchtext-free data loader:
+
+- Set `data.loader: native` in your YAML (defaults to `torchtext` if omitted).
+- Install a modern PyTorch and the minimal deps: `pip install -r requirements-macos-mps.txt`
+
+Example run:
+
+`python -m signjoey train configs/sign.yaml --device mps`
+
+and ensure your YAML has:
+
+`training.device: mps`
+`data.loader: native`
+
+Important MPS note: `CTCLoss` may not be implemented on MPS in your torch version. If you enable recognition (`recognition_loss_weight > 0`) and hit an error like `aten::_ctc_loss is not currently implemented for the MPS device`, this repo falls back to computing the CTC loss on CPU for that step (slower but works). Alternatively you can set `PYTORCH_ENABLE_MPS_FALLBACK=1` in your environment.
 
 ! Note that the default data directory is `./data`. If you download them to somewhere else, you need to update the `data_path` parameters in your config file.   
 ## ToDo:

@@ -1,6 +1,7 @@
 name: sign_experiment
 data:
     data_path: ./data/
+    loader: torchtext
     version: phoenix_2014_trans
     sgn: sign
     txt: text
@@ -67,7 +68,7 @@ training:
     eval_translation_beam_alpha: -1
     overwrite: true
     shuffle: true
-    use_cuda: true
+    device: cuda
     translation_max_output_length: 30
     keep_last_ckpts: 1
     batch_multiplier: 1
