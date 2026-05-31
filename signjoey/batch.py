@@ -16,6 +16,7 @@ class Batch:
         txt_pad_index,
         sgn_dim,
         is_train: bool = False,
+        device: torch.device = None,
         use_cuda: bool = False,
         frame_subsampling_ratio: int = None,
         random_frame_subsampling: bool = None,
@@ -31,7 +32,8 @@ class Batch:
         :param txt_pad_index:
         :param sgn_dim:
         :param is_train:
-        :param use_cuda:
+        :param device:
+        :param use_cuda: (deprecated) use device instead
         :param random_frame_subsampling
         """
 
@@ -90,7 +92,10 @@ class Batch:
         # Other
         self.num_txt_tokens = None
         self.num_gls_tokens = None
-        self.use_cuda = use_cuda
+        if device is None:
+            device = torch.device("cuda" if use_cuda else "cpu")
+        self.device = device
+        self.use_cuda = self.device.type == "cuda"
         self.num_seqs = self.sgn.size(0)
 
         if hasattr(torch_batch, "txt"):
@@ -108,22 +113,21 @@ class Batch:
             self.gls, self.gls_lengths = torch_batch.gls
             self.num_gls_tokens = self.gls_lengths.sum().detach().clone().numpy()
 
-        if use_cuda:
-            self._make_cuda()
+        self._to_device()
 
-    def _make_cuda(self):
+    def _to_device(self):
         """
-        Move the batch to GPU
+        Move the batch to the configured device
 
         :return:
         """
-        self.sgn = self.sgn.cuda()
-        self.sgn_mask = self.sgn_mask.cuda()
+        self.sgn = self.sgn.to(self.device)
+        self.sgn_mask = self.sgn_mask.to(self.device)
 
         if self.txt_input is not None:
-            self.txt = self.txt.cuda()
-            self.txt_mask = self.txt_mask.cuda()
-            self.txt_input = self.txt_input.cuda()
+            self.txt = self.txt.to(self.device)
+            self.txt_mask = self.txt_mask.to(self.device)
+            self.txt_input = self.txt_input.to(self.device)
 
     def sort_by_sgn_lengths(self):
         """
@@ -153,7 +157,6 @@ class Batch:
             self.txt_input = self.txt_input[perm_index]
             self.txt_lengths = self.txt_lengths[perm_index]
 
-        if self.use_cuda:
-            self._make_cuda()
+        self._to_device()
 
         return rev_index

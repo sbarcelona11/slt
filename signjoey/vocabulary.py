@@ -2,8 +2,7 @@
 import numpy as np
 
 from collections import defaultdict, Counter
-from typing import List
-from torchtext.data import Dataset
+from typing import List, Any
 
 SIL_TOKEN = "<si>"
 UNK_TOKEN = "<unk>"
@@ -192,7 +191,7 @@ def sort_and_cut(counter: Counter, limit: int):
 
 
 def build_vocab(
-    field: str, max_size: int, min_freq: int, dataset: Dataset, vocab_file: str = None
+    field: str, max_size: int, min_freq: int, dataset: Any, vocab_file: str = None
 ) -> Vocabulary:
     """
     Builds vocabulary for a torchtext `field` from given`dataset` or

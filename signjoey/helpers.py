@@ -12,12 +12,11 @@ import random
 import logging
 from sys import platform
 from logging import Logger
-from typing import Callable, Optional
+from typing import Callable, Optional, Union, Any
 import numpy as np
 
 import torch
 from torch import nn, Tensor
-from torchtext.data import Dataset
 import yaml
 from signjoey.vocabulary import GlossVocabulary, TextVocabulary
 
@@ -116,9 +115,9 @@ def set_seed(seed: int):
 
 
 def log_data_info(
-    train_data: Dataset,
-    valid_data: Dataset,
-    test_data: Dataset,
+    train_data: Any,
+    valid_data: Any,
+    test_data: Any,
     gls_vocab: GlossVocabulary,
     txt_vocab: TextVocabulary,
     logging_function: Callable[[str], None],
@@ -199,16 +198,67 @@ def get_latest_checkpoint(ckpt_dir: str) -> Optional[str]:
     return latest_checkpoint
 
 
-def load_checkpoint(path: str, use_cuda: bool = True) -> dict:
+def resolve_device(
+    training_cfg: dict, device: Optional[str] = None
+) -> torch.device:
+    """
+    Resolve a torch.device from config and/or CLI override.
+
+    Backwards compatible behavior:
+    - If `training.device` is missing, falls back to `training.use_cuda` (bool).
+    - `device="auto"` picks cuda/mps/cpu depending on availability.
+    """
+    requested = (
+        device
+        or training_cfg.get("device")
+        or ("cuda" if training_cfg.get("use_cuda", False) else "cpu")
+    )
+    requested = str(requested).lower()
+
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+
+    if requested == "cpu":
+        return torch.device("cpu")
+
+    if requested == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but torch.cuda.is_available() is False.")
+        return torch.device("cuda")
+
+    if requested == "mps":
+        if not hasattr(torch.backends, "mps"):
+            raise RuntimeError("MPS requested but this torch build has no MPS backend.")
+        if not torch.backends.mps.is_available():
+            raise RuntimeError("MPS requested but torch.backends.mps.is_available() is False.")
+        return torch.device("mps")
+
+    raise ValueError(f"Unknown device '{requested}'. Expected one of auto/cpu/cuda/mps.")
+
+
+def load_checkpoint(
+    path: str,
+    device: Optional[Union[str, torch.device]] = None,
+    use_cuda: Optional[bool] = None,
+) -> dict:
     """
     Load model from saved checkpoint.
 
-    :param path: path to checkpoint
-    :param use_cuda: using cuda or not
-    :return: checkpoint (dict)
+    Preferred: pass `device` (torch.device or string like 'cpu'/'cuda'/'mps').
+    Backwards compatible: pass `use_cuda` (bool).
     """
     assert os.path.isfile(path), "Checkpoint %s not found" % path
-    checkpoint = torch.load(path, map_location="cuda" if use_cuda else "cpu")
+
+    if device is None:
+        if use_cuda is None:
+            use_cuda = True
+        device = "cuda" if use_cuda else "cpu"
+
+    checkpoint = torch.load(path, map_location=device)
     return checkpoint
 
 

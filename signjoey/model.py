@@ -1,8 +1,4 @@
 # coding: utf-8
-import tensorflow as tf
-
-tf.config.set_visible_devices([], "GPU")
-
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,6 +20,23 @@ from signjoey.batch import Batch
 from signjoey.helpers import freeze_params
 from torch import Tensor
 from typing import Union
+
+
+def _lazy_tf():
+    try:
+        import tensorflow as tf  # type: ignore
+
+        try:
+            tf.config.set_visible_devices([], "GPU")
+        except Exception:
+            # best-effort; TF versions/platforms differ
+            pass
+        return tf
+    except Exception as e:
+        raise RuntimeError(
+            "TensorFlow is required for CTC beam-search decoding in recognition. "
+            "Install tensorflow or set recognition_loss_weight=0 to disable recognition."
+        ) from e
 
 
 class SignModel(nn.Module):
@@ -273,6 +286,7 @@ class SignModel(nn.Module):
             )
 
             assert recognition_beam_size > 0
+            tf = _lazy_tf()
             ctc_decode, _ = tf.nn.ctc_beam_search_decoder(
                 inputs=tf_gloss_probabilities,
                 sequence_length=batch.sgn_lengths.cpu().detach().numpy(),
